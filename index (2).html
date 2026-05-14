@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>視覺助理 2.5 - 語音版</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 20px; color: #00d4ff; font-size: 22px; }
+        
+        .container {
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .video-container {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        /* 縮小照片視窗至 40% */
+        video, canvas {
+            width: 40%; 
+            height: auto;
+            aspect-ratio: 4 / 3;
+            object-fit: cover;
+            border-radius: 12px;
+            background: #0f0f23;
+            margin: 0 auto 25px auto;
+            display: block;
+            border: 3px solid #00d4ff;
+        }
+
+        /* 超大按鈕配置 */
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        button {
+            width: 100%;
+            padding: 35px 10px; /* 超大點擊區域 */
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 24px; /* 超大字體 */
+            font-weight: 800;
+            transition: transform 0.1s, background 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        #captureBtn { background: #00d4ff; color: #1a1a2e; }
+        #askBtn { background: #7c3aed; color: white; }
+        
+        button:active { transform: scale(0.96); }
+        button:disabled { opacity: 0.3; cursor: not-allowed; }
+        
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .loading { background: #fbbf24; color: #1a1a2e; }
+        .error { background: #ef4444; color: white; }
+        .success { background: #22c55e; color: white; }
+
+        .api-key-container {
+            width: 100%;
+            max-width: 500px;
+            margin-top: 30px;
+            padding: 20px;
+            background: #16213e;
+            border-radius: 12px;
+        }
+        .api-key-container input {
+            width: 100%;
+            padding: 15px;
+            border-radius: 8px;
+            border: none;
+            background: #0f0f23;
+            color: #eee;
+            font-size: 16px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>視覺助理 2.5</h1>
+    
+    <div class="container">
+        <div class="video-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas" style="display:none;"></canvas>
+            
+            <div class="controls">
+                <button id="captureBtn">📸 1. 擷取畫面</button>
+                <button id="askBtn" disabled>🔍 2. 辨識分析</button>
+            </div>
+            
+            <div id="status">等待相機啟動...</div>
+        </div>
+    </div>
+
+    <div class="api-key-container">
+        <input type="password" id="apiKey" placeholder="在此輸入 Gemini API Key">
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureBtn = document.getElementById('captureBtn');
+        const askBtn = document.getElementById('askBtn');
+        const status = document.getElementById('status');
+        const apiKeyInput = document.getElementById('apiKey');
+
+        let capturedImage = null;
+        // 已更新為 2.5 版本
+        const modelName = 'gemini-2.5-flash'; 
+
+        function speak(text) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-TW';
+            window.speechSynthesis.speak(utterance);
+        }
+
+        async function initWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                video.srcObject = stream;
+                status.textContent = '系統就緒';
+            } catch (err) {
+                status.textContent = '相機啟動失敗';
+                status.className = 'error';
+            }
+        }
+
+        captureBtn.addEventListener('click', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            capturedImage = canvas.toDataURL('image/jpeg', 0.85);
+            askBtn.disabled = false;
+            status.textContent = '已鎖定畫面';
+            status.className = 'success';
+            speak('已擷取');
+        });
+
+        async function askGemini() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!capturedImage || !apiKey) {
+                status.textContent = '請檢查金鑰或重新擷取';
+                status.className = 'error';
+                return;
+            }
+            
+            askBtn.disabled = true;
+            captureBtn.disabled = true;
+            status.textContent = 'Gemini 2.5 思考中...';
+            status.className = 'loading';
+            speak('正在分析');
+
+            const base64Data = capturedImage.split(',')[1];
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: "這張圖片裡有什麼？請用繁體中文簡單描述，不超過兩句話。" },
+                        { inline_data: { mime_type: 'image/jpeg', data: base64Data } }
+                    ]
+                }]
+            };
+
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '辨識失敗';
+                
+                status.textContent = '分析完成';
+                status.className = 'success';
+                speak(resultText);
+
+            } catch (err) {
+                status.textContent = '網路或金鑰錯誤';
+                status.className = 'error';
+                speak('發生錯誤');
+            } finally {
+                askBtn.disabled = false;
+                captureBtn.disabled = false;
+            }
+        }
+
+        askBtn.addEventListener('click', askGemini);
+        initWebcam();
+    </script>
+</body>
+</html>
